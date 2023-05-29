@@ -1,0 +1,87 @@
+name: "Docker Release"
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        type: string
+        required: true
+      latest:
+        type: string
+        default: auto
+        required: false
+      platforms:
+        required: false
+        default: "linux/amd64"
+        description: "Comma separated list of platforms for docker buildx (eg. linux/amd64,linux/arm64)"
+        type: string
+    secrets:
+      docker_username:
+        required: false
+      docker_password:
+        required: false
+      docker_github_token:
+        required: false
+
+jobs:
+  docker:
+    name: Docker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: |
+            ${{ inputs.image }}
+          flavor: |
+            latest=${{ inputs.latest }}
+          tags: |
+            type=sha
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+        with:
+          platforms: ${{ inputs.platforms }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+        with:
+          platforms: ${{ inputs.platforms }}
+
+      - name: Docker Login (Docker Hub)
+        uses: docker/login-action@v2
+        env:
+          GH_DOCKER_USERNAME: ${{ secrets.docker_username }}
+          GH_DOCKER_PASSWORD: ${{ secrets.docker_password }}
+        if: ${{ (env.GH_DOCKER_USERNAME != '') && (env.GH_DOCKER_PASSWORD != '') }}
+        with:
+          username: ${{ secrets.docker_username }}
+          password: ${{ secrets.docker_password }}
+
+      - name: Docker Login (GitHub Container Registry)
+        uses: docker/login-action@v2
+        env:
+          GH_DOCKER_PASSWORD: ${{ secrets.docker_github_token }}
+        if: ${{ env.GH_DOCKER_PASSWORD != '' }}
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.docker_github_token }}
+
+      - name: Build and Push Docker image
+        uses: docker/build-push-action@v3
+        with:
+          context: ./
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
